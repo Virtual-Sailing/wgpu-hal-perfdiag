@@ -19,7 +19,7 @@ homepage = "https://wgpu.rs/"
 readme = "README.md"
 keywords = ["graphics"]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/clammet/wgpu-hal-perfdiag"
+repository = "https://github.com/Virtual-Sailing/wgpu-hal-perfdiag"
 
 [package.metadata.cargo-machete]
 ignored = ["cfg_aliases"]
