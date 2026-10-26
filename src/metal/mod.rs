@@ -383,6 +383,7 @@ pub struct Device {
 
 pub struct Surface {
     render_layer: Mutex<metal::MetalLayer>,
+    presented_handler: Mutex<Option<Arc<dyn Fn(f64) + Send + Sync>>>,
     swapchain_format: RwLock<Option<wgt::TextureFormat>>,
     extent: RwLock<wgt::Extent3d>,
     // Useful for UI-intensive applications that are sensitive to
@@ -392,6 +393,14 @@ pub struct Surface {
 
 unsafe impl Send for Surface {}
 unsafe impl Sync for Surface {}
+
+impl Surface {
+    /// Observe the host timestamp of each displayed drawable. Called on Metal's
+    /// presentation callback thread; the handler must be short and must not panic.
+    pub fn set_presented_handler(&self, handler: Arc<dyn Fn(f64) + Send + Sync>) {
+        *self.presented_handler.lock() = Some(handler);
+    }
+}
 
 #[derive(Debug)]
 pub struct SurfaceTexture {
@@ -473,13 +482,21 @@ impl crate::Queue for Queue {
     }
     unsafe fn present(
         &self,
-        _surface: &Surface,
+        surface: &Surface,
         texture: SurfaceTexture,
     ) -> Result<(), crate::SurfaceError> {
         let queue = &self.raw.lock();
         objc::rc::autoreleasepool(|| {
             let command_buffer = queue.new_command_buffer();
             command_buffer.set_label("(wgpu internal) Present");
+
+            if let Some(handler) = surface.presented_handler.lock().clone() {
+                let block = block::ConcreteBlock::new(move |drawable: &metal::DrawableRef| {
+                    handler(drawable.presented_time());
+                })
+                .copy();
+                texture.drawable.add_presented_handler(&block);
+            }
 
             // https://developer.apple.com/documentation/quartzcore/cametallayer/1478157-presentswithtransaction?language=objc
             if !texture.present_with_transaction {
@@ -980,6 +997,7 @@ struct CommandState {
 
     /// Timer query that should be executed when the next pass starts.
     pending_timer_queries: Vec<(QuerySet, u32)>,
+    next_render_timing: Option<Arc<dyn Fn(Option<f64>) + Send + Sync>>,
 }
 
 pub struct CommandEncoder {

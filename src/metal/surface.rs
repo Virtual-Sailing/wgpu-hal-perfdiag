@@ -26,6 +26,7 @@ impl super::Surface {
     fn new(layer: metal::MetalLayer) -> Self {
         Self {
             render_layer: Mutex::new(layer),
+            presented_handler: Mutex::new(None),
             swapchain_format: RwLock::new(None),
             extent: RwLock::new(wgt::Extent3d::default()),
             present_with_transaction: false,

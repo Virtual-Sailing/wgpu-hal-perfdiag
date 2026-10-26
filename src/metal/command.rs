@@ -28,6 +28,7 @@ impl Default for super::CommandState {
             work_group_memory_sizes: Vec::new(),
             push_constants: Vec::new(),
             pending_timer_queries: Vec::new(),
+            next_render_timing: None,
         }
     }
 }
@@ -35,6 +36,39 @@ impl Default for super::CommandState {
 impl super::CommandEncoder {
     pub fn raw_command_buffer(&self) -> Option<&metal::CommandBuffer> {
         self.raw_cmd_buf.as_ref()
+    }
+
+    /// Observe the GPU execution time of the next render pass's native command
+    /// buffer. wgpu records each pass in its own command buffer, so observing the
+    /// encoder's current buffer before/after a pass would measure an empty buffer.
+    /// The callback runs on Metal's completion thread and must not block or panic.
+    pub fn on_next_render_pass_completed(
+        &mut self,
+        callback: impl Fn(Option<f64>) + Send + Sync + 'static,
+    ) {
+        self.state.next_render_timing = Some(alloc::sync::Arc::new(callback));
+    }
+
+    fn on_gpu_completed(&self, callback: impl Fn(Option<f64>) + Send + 'static) -> bool {
+        let Some(buffer) = self.raw_cmd_buf.as_ref() else {
+            return false;
+        };
+        let handler = block::ConcreteBlock::new(move |buffer: &metal::CommandBufferRef| {
+            use objc::{msg_send, sel, sel_impl};
+            // SAFETY: Metal supplies a live, completed MTLCommandBuffer. These
+            // properties return CFTimeInterval (f64) and are valid after completion.
+            let start: f64 = unsafe { msg_send![buffer, GPUStartTime] };
+            let end: f64 = unsafe { msg_send![buffer, GPUEndTime] };
+            let valid = buffer.status() == metal::MTLCommandBufferStatus::Completed
+                && start.is_finite()
+                && end.is_finite()
+                && start > 0.
+                && end > start;
+            callback(valid.then_some(end - start));
+        })
+        .copy();
+        buffer.add_completed_handler(&handler);
+        true
     }
 
     fn enter_blit(&mut self) -> &metal::BlitCommandEncoderRef {
@@ -215,6 +249,7 @@ impl crate::CommandEncoder for super::CommandEncoder {
     }
 
     unsafe fn discard_encoding(&mut self) {
+        self.state.next_render_timing = None;
         self.leave_blit();
         // when discarding, we don't have a guarantee that
         // everything is in a good state, so check carefully
@@ -248,7 +283,7 @@ impl crate::CommandEncoder for super::CommandEncoder {
     where
         I: Iterator<Item = super::CommandBuffer>,
     {
-        //do nothing
+        self.state.next_render_timing = None;
     }
 
     unsafe fn transition_buffers<'a, T>(&mut self, _barriers: T)
@@ -527,6 +562,9 @@ impl crate::CommandEncoder for super::CommandEncoder {
         desc: &crate::RenderPassDescriptor<super::QuerySet, super::TextureView>,
     ) -> Result<(), crate::DeviceError> {
         self.begin_pass();
+        if let Some(callback) = self.state.next_render_timing.take() {
+            self.on_gpu_completed(move |seconds| callback(seconds));
+        }
         self.state.index = None;
 
         assert!(self.state.blit.is_none());

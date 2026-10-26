@@ -1,3 +1,17 @@
+# wgpu-hal-perfdiag
+
+Standalone Git fork of `wgpu-hal` 27.0.4 for SailSim performance diagnostics.
+The Rust package remains named `wgpu-hal` so it can replace the upstream crate
+through Cargo's `[patch.crates-io]` mechanism.
+
+See [PERFDIAG.md](PERFDIAG.md) for the changes, dependency setup, and validation.
+Unmodified sibling crates use crates.io releases; no upstream workspace checkout
+is required. This fork is consumed from Git and is not published to crates.io.
+
+Only the Metal backend has source changes. The DirectX 12 backend is unchanged.
+
+---
+
 # `wgpu_hal`: a cross-platform unsafe graphics abstraction
 
 This crate defines a set of traits abstracting over modern graphics APIs,
